@@ -2,33 +2,30 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
-	"os/signal"
 	"strconv"
-	"syscall"
-	"time"
+	"strings"
 )
 
 const templatesDir = "templates"
 
 type Day struct {
 	DayNumber  int
-	DayContent string
+	DayTopic   string
+	DayContent template.HTML
 }
 
 func loadDay(w http.ResponseWriter, dayNumber int) {
 	day := Day{
 		DayNumber:  dayNumber,
+		DayTopic:   "",
 		DayContent: "",
 	}
 
 	var dayContentBuf bytes.Buffer
-	fmt.Fprintf(&dayContentBuf, "%03d", dayNumber)
 
 	tmpl, err := template.ParseFiles(templatesDir + fmt.Sprintf("/days/day%03d.html", dayNumber))
 	if err != nil {
@@ -41,7 +38,10 @@ func loadDay(w http.ResponseWriter, dayNumber int) {
 		return
 	}
 
-	day.DayContent = dayContentBuf.String()
+	dayContent := dayContentBuf.String()
+	splitDayContent := strings.SplitN(dayContent, "\n", 3)
+	day.DayTopic = splitDayContent[0]
+	day.DayContent = template.HTML(splitDayContent[2])
 
 	tmpl, err = template.ParseFiles(templatesDir + "/days/base.html")
 	if err != nil {
@@ -56,7 +56,7 @@ func loadDay(w http.ResponseWriter, dayNumber int) {
 }
 
 func dayHandler(w http.ResponseWriter, r *http.Request) {
-	dayString := r.PathValue("day")
+	dayString := r.PathValue("id")
 	dayNumber, err := strconv.Atoi(dayString)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -81,31 +81,11 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	ctx, _ := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /day/{id}", dayHandler)
 	mux.HandleFunc("GET /", indexHandler)
 
-	server := http.Server{
-		Addr:    ":8080",
-		Handler: mux,
-	}
-
-	go func() {
-		err := server.ListenAndServe()
-		if err != nil && errors.Is(err, http.ErrServerClosed) {
-			log.Print("Server closed")
-		} else {
-			log.Fatal(err)
-		}
-	}()
-
-	<-ctx.Done()
-	log.Print("Shutting down server")
-	shoutDownCtx, shutdownRelease := context.WithTimeout(ctx, time.Second*10)
-	defer shutdownRelease()
-	if err := server.Shutdown(shoutDownCtx); err != nil {
+	if err := http.ListenAndServe(":8080", mux); err != nil {
 		log.Fatal(err)
 	}
 }
